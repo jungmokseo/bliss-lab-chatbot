@@ -237,6 +237,7 @@
     <button class="quick-btn" onclick="sendQuick('법인카드 사용 방법 알려줘')">💳 법인카드</button>
     <button class="quick-btn" onclick="sendQuick('장비 예약은 어떻게 해?')">🔧 장비 예약</button>
     <button class="quick-btn" onclick="sendQuick('출장 서류 뭐 필요해?')">✈️ 출장 서류</button>
+    <button class="quick-btn" onclick="startVacationFlow()">🏖️ 휴가</button>
   </div>
 
   <div class="messages" id="messages">
@@ -1121,6 +1122,17 @@ async function handleFAQWithGemini(query) {
 }
 
 // ═══════════════════════════════════════════
+// ═══════════════════════════════════════════
+// 대화형 휴가 조회 플로우
+// ═══════════════════════════════════════════
+let _waitingForVacationName = false;
+
+function startVacationFlow() {
+  _waitingForVacationName = true;
+  addBotMessage('이름을 입력하세요:');
+  document.getElementById('msg-input').focus();
+}
+
 // Send Message
 // ═══════════════════════════════════════════
 async function sendMessage() {
@@ -1131,6 +1143,21 @@ async function sendMessage() {
   addUserMessage(text);
   input.value = '';
   autoResize(input);
+
+  // 휴가 조회 이름 입력 대기 중이면 바로 개인 휴가 조회
+  if (_waitingForVacationName) {
+    _waitingForVacationName = false;
+    showTyping();
+    await new Promise(r => setTimeout(r, 300));
+    const result = handleVacationInquiry(text.trim());
+    removeTyping();
+    if (typeof result === 'string') {
+      addBotMessage(result);
+    } else {
+      addBotMessage(result.text, result.extra || '');
+    }
+    return;
+  }
 
   showTyping();
 
