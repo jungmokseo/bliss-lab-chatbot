@@ -237,7 +237,6 @@
     <button class="quick-btn" onclick="sendQuick('법인카드 사용 방법 알려줘')">💳 법인카드</button>
     <button class="quick-btn" onclick="sendQuick('장비 예약은 어떻게 해?')">🔧 장비 예약</button>
     <button class="quick-btn" onclick="sendQuick('출장 서류 뭐 필요해?')">✈️ 출장 서류</button>
-    <button class="quick-btn" onclick="sendQuick('전체 휴가')">🏖️ 전체 휴가</button>
   </div>
 
   <div class="messages" id="messages">
@@ -326,9 +325,11 @@ const VacationManager = {
     '홍승완', '김찬수', '손가영', '김미도', '장한빛'
   ],
 
+  _dataVersion: 2,  // 데이터 버전 (변경 시 기존 localStorage 초기화)
+
   _getKey() {
     const year = new Date().getFullYear();
-    return 'bliss_vacation_' + year;
+    return 'bliss_vacation_' + year + '_v' + this._dataVersion;
   },
 
   /** localStorage에서 현재 연도 데이터 로드 (없으면 초기화) */
@@ -338,11 +339,42 @@ const VacationManager = {
     if (stored) {
       try { return JSON.parse(stored); } catch(e) { /* fallthrough */ }
     }
-    // 초기 데이터 생성
-    const data = {};
-    for (const name of this.defaultStudents) {
-      data[name] = { annual: 12, used: [] };
-    }
+    // 2026년 초기 데이터 (실제 사용 내역 반영, 인턴 4명은 0일)
+    const data = {
+      '김태영': { annual: 12, used: [] },
+      '조예진': { annual: 12, used: [] },
+      '이유림': { annual: 12, used: [
+        { start:'2026-01-19', end:'2026-01-19', days:1 },
+        { start:'2026-01-20', end:'2026-01-20', days:1 }
+      ]},
+      '박시연': { annual: 12, used: [
+        { start:'2026-01-29', end:'2026-01-30', days:2 }
+      ]},
+      '육근영': { annual: 12, used: [
+        { start:'2026-02-13', end:'2026-02-13', days:1 },
+        { start:'2026-02-19', end:'2026-02-20', days:2 }
+      ]},
+      '함혜인': { annual: 12, used: [
+        { start:'2026-01-30', end:'2026-01-30', days:1 },
+        { start:'2026-02-26', end:'2026-02-27', days:2 }
+      ]},
+      '김수아': { annual: 12, used: [] },
+      '강민경': { annual: 12, used: [
+        { start:'2026-01-05', end:'2026-01-05', days:1 }
+      ]},
+      '정윤민': { annual: 12, used: [
+        { start:'2026-01-15', end:'2026-01-15', days:1 },
+        { start:'2026-01-16', end:'2026-01-16', days:1 }
+      ]},
+      '손가영': { annual: 12, used: [
+        { start:'2026-01-19', end:'2026-01-19', days:1 }
+      ]},
+      '김찬수': { annual: 12, used: [] },
+      '박지민': { annual: 12, used: [] },
+      '홍승완': { annual: 12, used: [] },
+      '김미도': { annual: 12, used: [] },
+      '장한빛': { annual: 12, used: [] }
+    };
     localStorage.setItem(key, JSON.stringify(data));
     return data;
   },
