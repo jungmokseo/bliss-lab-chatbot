@@ -1069,6 +1069,30 @@ function keywordMatchFAQ(query) {
 }
 
 // ═══════════════════════════════════════════
+// 대화 기억 (Conversation Memory)
+// ═══════════════════════════════════════════
+const MAX_HISTORY = 6; // 최근 6턴(사용자+봇 쌍) 유지 — 토큰 효율과 맥락 유지 균형
+let _conversationHistory = []; // [{role:'user',text:'...'},{role:'bot',text:'...'},...]
+
+function addToHistory(role, text) {
+  // HTML 태그 제거하여 순수 텍스트만 저장 (토큰 절약)
+  const clean = text.replace(/<[^>]*>/g, '').trim();
+  if (!clean) return;
+  _conversationHistory.push({ role: role, text: clean });
+  // 최대 턴 수 × 2 (사용자+봇 = 1턴) 초과 시 오래된 것부터 제거
+  while (_conversationHistory.length > MAX_HISTORY * 2) {
+    _conversationHistory.shift();
+  }
+}
+
+function buildHistoryContext() {
+  if (_conversationHistory.length === 0) return '';
+  return _conversationHistory.map(h =>
+    (h.role === 'user' ? '사용자: ' : '챗봇: ') + h.text
+  ).join('\n');
+}
+
+// ═══════════════════════════════════════════
 // Gemini API — 자연어 이해 + 등록된 FAQ 기반 답변
 // ═══════════════════════════════════════════
 function buildFaqContext() {
@@ -1079,16 +1103,14 @@ function buildFaqContext() {
 
 async function askGemini(userQuery) {
   const faqContext = buildFaqContext();
+  const historyContext = buildHistoryContext();
   try {
-    // Apps Script 백엔드를 통해 Gemini API 호출 (API 키 서버측 보관)
-    const url = APPS_SCRIPT_URL + '?action=gemini&callback=__geminiCb';
     const resp = await fetch(APPS_SCRIPT_URL, {
       method: 'POST',
       mode: 'no-cors',
       headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify({ action: 'gemini', query: userQuery, faqContext: faqContext })
+      body: JSON.stringify({ action: 'gemini', query: userQuery, faqContext: faqContext, history: historyContext })
     });
-    // no-cors doesn't give readable response, use JSONP instead
   } catch(e) {}
 
   // JSONP 방식으로 호출 (CORS 우회)
@@ -1112,6 +1134,7 @@ async function askGemini(userQuery) {
       + '?action=gemini'
       + '&query=' + encodeURIComponent(userQuery)
       + '&faqContext=' + encodeURIComponent(faqContext)
+      + '&history=' + encodeURIComponent(historyContext)
       + '&callback=' + cbName;
     script.onerror = () => { clearTimeout(timeout); resolve(null); };
     document.body.appendChild(script);
@@ -1240,6 +1263,7 @@ async function sendMessage() {
   if (!text) return;
 
   addUserMessage(text);
+  addToHistory('user', text);
   input.value = '';
   autoResize(input);
 
@@ -1374,6 +1398,7 @@ async function sendMessage() {
       const geminiResult = await handleFAQWithGemini(text);
       removeTyping();
       addBotMessage(geminiResult.text, geminiResult.extra || '');
+      addToHistory('bot', geminiResult.text);
     } catch (err) {
       console.error('Gemini 처리 오류:', err);
       removeTyping();
@@ -1385,8 +1410,10 @@ async function sendMessage() {
   removeTyping();
   if (typeof result === 'string') {
     addBotMessage(result);
+    addToHistory('bot', result);
   } else {
     addBotMessage(result.text, result.extra || '');
+    addToHistory('bot', result.text);
   }
 }
 
