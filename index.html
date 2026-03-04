@@ -237,7 +237,9 @@
     <button class="quick-btn" onclick="sendQuick('법인카드 사용 방법 알려줘')">💳 법인카드</button>
     <button class="quick-btn" onclick="sendQuick('장비 예약은 어떻게 해?')">🔧 장비 예약</button>
     <button class="quick-btn" onclick="sendQuick('출장 서류 뭐 필요해?')">✈️ 출장 서류</button>
-    <button class="quick-btn" onclick="startVacationFlow()">🏖️ 휴가</button>
+    <button class="quick-btn" onclick="startVacationFlow()">🏖️ 휴가조회</button>
+    <button class="quick-btn" onclick="startVacationRegisterFlow()">📝 휴가등록</button>
+    <button class="quick-btn" onclick="startVacationCancelFlow()">❌ 휴가취소</button>
   </div>
 
   <div class="messages" id="messages">
@@ -270,19 +272,19 @@
     </div>
     <div class="help-item">
       <div class="cmd">휴가 등록</div>
-      <div class="desc">"홍길동 휴가 4월 15-17일 등록" 또는 "홍길동 휴가 3월 20일 등록"</div>
+      <div class="desc">"📝 휴가등록" 버튼 클릭, 또는 "홍길동 휴가 4월 15-17일 등록"</div>
     </div>
     <div class="help-item">
-      <div class="cmd">전체 휴가 현황</div>
-      <div class="desc">"전체 휴가" — 구성원 전원의 휴가 사용/잔여 현황을 한눈에 봅니다.</div>
+      <div class="cmd">휴가 취소</div>
+      <div class="desc">"❌ 휴가취소" 버튼 클릭 → 이름 입력 → 취소할 휴가 선택</div>
     </div>
     <div class="help-item">
       <div class="cmd">인적사항 조회</div>
       <div class="desc">"이름 학번", "이름 이메일", "이름 연구자등록번호", "이름 정보"</div>
     </div>
     <div class="help-item">
-      <div class="cmd">미답변 질문 확인</div>
-      <div class="desc">"미답변 질문" — 아직 답변이 등록되지 않은 질문 목록을 확인합니다.</div>
+      <div class="cmd">미답변 질문</div>
+      <div class="desc">"미답변 질문" — 현재 답변 대기 중인 질문 건수를 확인합니다.</div>
     </div>
     <div class="help-item">
       <div class="cmd">답변 대기</div>
@@ -290,7 +292,11 @@
     </div>
     <div class="help-item">
       <div class="cmd">답변 날짜</div>
-      <div class="desc">모든 답변에 날짜가 표시됩니다. 오래된 정보는 다시 확인해주세요.</div>
+      <div class="desc">모든 FAQ 답변에 등록일과 답변자가 표시됩니다. 오래된 정보는 다시 확인해주세요.</div>
+    </div>
+    <div class="help-item">
+      <div class="cmd">피드백 / 기능 요청</div>
+      <div class="desc">"피드백" 또는 "기능 요청" — 챗봇 개선 의견이나 새 기능 요청을 보낼 수 있습니다.</div>
     </div>
     <div class="help-item">
       <div class="cmd">개인정보</div>
@@ -298,7 +304,7 @@
     </div>
     <div class="help-item">
       <div class="cmd">⚙️ 관리자 참고</div>
-      <div class="desc">미답변 질문은 Google Sheets "PendingQuestions" 시트에서도 확인 가능합니다. FAQ 답변 추가는 Notion FAQ DB에서 합니다. 📅🔬📝 아이콘이 붙은 항목은 향후 API 연계로 자동 업데이트 예정입니다.</div>
+      <div class="desc">미답변 질문과 피드백은 Notion FAQ DB에서 확인 및 관리합니다. "전체 휴가"를 입력하면 전 구성원 휴가 현황을 볼 수 있습니다.</div>
     </div>
   </div>
 </div>
@@ -431,6 +437,29 @@ const VacationManager = {
     };
   },
 
+  /** 휴가 취소 (인덱스 기반) */
+  cancel(name, entryIndex) {
+    const data = this.load();
+    const person = data[name];
+    if (!person) return { success: false, error: 'not_found' };
+    if (entryIndex < 0 || entryIndex >= person.used.length) return { success: false, error: 'invalid_index' };
+
+    const removed = person.used.splice(entryIndex, 1)[0];
+    this.save(data);
+
+    const usedTotal = person.used.reduce((s,v) => s + v.days, 0);
+    const remaining = person.annual - usedTotal;
+
+    return {
+      success: true,
+      name,
+      removed,
+      usedTotal,
+      remaining,
+      annual: person.annual
+    };
+  },
+
   /** Apps Script 백그라운드 동기화 (fire-and-forget) */
   _syncToSheets(action, params) {
     if (!APPS_SCRIPT_URL) return;
@@ -463,7 +492,7 @@ const PendingManager = {
   },
 
   /** 미답변 질문 추가 (중복 방지) */
-  add(question) {
+  add(question, category) {
     const list = this.load();
     const normalized = question.trim().toLowerCase();
     const exists = list.some(q => q.question.trim().toLowerCase() === normalized);
@@ -472,14 +501,17 @@ const PendingManager = {
     list.push({
       question: question.trim(),
       timestamp: new Date().toLocaleString('ko-KR'),
-      status: '대기'
+      status: '대기',
+      category: category || ''
     });
     this.save(list);
 
-    // 백그라운드 Sheets 동기화
+    // 백그라운드 Notion FAQ DB 동기화 (Apps Script 프록시 경유)
     if (APPS_SCRIPT_URL) {
       try {
-        fetch(APPS_SCRIPT_URL + '?action=addPending&q=' + encodeURIComponent(question.trim()), { mode: 'no-cors' }).catch(() => {});
+        let url = APPS_SCRIPT_URL + '?action=addPending&q=' + encodeURIComponent(question.trim());
+        if (category) url += '&category=' + encodeURIComponent(category);
+        fetch(url, { mode: 'no-cors' }).catch(() => {});
       } catch(e) {}
     }
   },
@@ -812,9 +844,25 @@ function processMessage(text) {
     return handlePendingQuestions();
   }
 
+  // 0.5) 피드백 / 기능 요청
+  if (/피드백|기능\s*요청|개선\s*요청|건의|챗봇\s*개선|feedback/.test(trimmed)) {
+    return startFeedbackFlowInline();
+  }
+
   // 1) 전체 휴가 현황: "전체 휴가", "휴가 현황 전체", "휴가 전체"
   if (/전체\s*휴가|휴가\s*현황\s*전체|휴가\s*전체/.test(trimmed)) {
     return handleAllVacationSummary();
+  }
+
+  // 1.5) 휴가 취소: "홍길동 휴가 취소", "휴가 취소"
+  if (/휴가\s*취소/.test(trimmed)) {
+    const cancelNameMatch = trimmed.match(/^(\S{2,4})\s*휴가\s*취소/);
+    if (cancelNameMatch) {
+      return handleVacationCancelStart(cancelNameMatch[1].trim());
+    }
+    // 이름 없이 "휴가 취소"만 입력한 경우 → 대화형 플로우 시작
+    startVacationCancelFlow();
+    return null; // sendMessage에서 null이면 봇 메시지 추가하지 않음
   }
 
   // 2) Vacation registration: "김태영 휴가 4월 15-17일 등록"
@@ -824,6 +872,14 @@ function processMessage(text) {
     return handleVacationRegister(regMatch[1].trim(), parseInt(regMatch[2]), parseInt(regMatch[3]), parseInt(regMatch[4]));
   } else if (regSingle && !regMatch) {
     return handleVacationRegister(regSingle[1].trim(), parseInt(regSingle[2]), parseInt(regSingle[3]), parseInt(regSingle[3]));
+  }
+
+  // 2.5) 휴가 등록 (이름만 있는 경우): "홍길동 휴가 등록" → 대화형 플로우
+  if (/^(\S{2,4})\s*휴가\s*등록/.test(trimmed)) {
+    const nameMatch = trimmed.match(/^(\S{2,4})\s*휴가\s*등록/);
+    _flowState = { type: 'vacation_register', step: 'date', name: nameMatch[1].trim() };
+    addBotMessage(`<strong>${nameMatch[1].trim()}</strong> 님의 휴가를 등록합니다.\n\n📅 날짜를 입력하세요:\n예: "4월 15-17일" 또는 "3월 20일"`);
+    return null;
   }
 
   // 3) Vacation inquiry
@@ -857,13 +913,12 @@ function handlePendingQuestions() {
     return { text: '현재 대기 중인 미답변 질문이 없습니다.', extra: tag };
   }
 
-  let rows = '';
-  for (let i = 0; i < pending.length; i++) {
-    rows += `<div class="vc-row"><span class="vc-label">${i+1}. ${pending[i].question}</span><span class="vc-value" style="font-size:11px;color:var(--text-light)">${pending[i].timestamp}</span></div>`;
-  }
-  const card = `<div class="vacation-card">${rows}</div>`;
-  const tag = `<div class="info-tag">💡 FAQ DB에 답변을 추가하면 다음 질문부터 자동 응답됩니다</div>`;
-  return { text: `📋 <strong>미답변 질문</strong> (${pending.length}건)`, extra: card + tag };
+  // 일반 사용자에게는 건수만 표시 (개인정보 보호)
+  const tag = `<div class="info-tag">💡 답변이 등록되면 자동으로 반영됩니다. 관리자는 Notion FAQ DB에서 상세 내용을 확인할 수 있습니다.</div>`;
+  return {
+    text: `📋 현재 <strong>${pending.length}건</strong>의 미답변 질문이 대기 중입니다.\n\n답변이 필요한 질문이 있으면 교수님 또는 관리자에게 문의해주세요.`,
+    extra: tag
+  };
 }
 
 // ═══════════════════════════════════════════
@@ -1122,18 +1177,62 @@ async function handleFAQWithGemini(query) {
 }
 
 // ═══════════════════════════════════════════
+// 대화형 플로우 시스템 (휴가 조회/등록/취소, 피드백)
 // ═══════════════════════════════════════════
-// 대화형 휴가 조회 플로우
-// ═══════════════════════════════════════════
-let _waitingForVacationName = false;
+let _flowState = null; // { type, step, name, ... }
 
+/** 🏖️ 휴가조회 버튼 → 이름 입력 대기 */
 function startVacationFlow() {
-  _waitingForVacationName = true;
+  _flowState = { type: 'vacation_inquiry', step: 'name' };
   addBotMessage('이름을 입력하세요:');
   document.getElementById('msg-input').focus();
 }
 
-// Send Message
+/** 📝 휴가등록 버튼 → 이름 입력 대기 */
+function startVacationRegisterFlow() {
+  _flowState = { type: 'vacation_register', step: 'name' };
+  addBotMessage('휴가를 등록할 이름을 입력하세요:');
+  document.getElementById('msg-input').focus();
+}
+
+/** ❌ 휴가취소 버튼 → 이름 입력 대기 */
+function startVacationCancelFlow() {
+  _flowState = { type: 'vacation_cancel', step: 'name' };
+  addBotMessage('휴가를 취소할 이름을 입력하세요:');
+  document.getElementById('msg-input').focus();
+}
+
+/** 휴가 취소 시작 (이름이 이미 있을 때) — 사용 내역 표시 */
+function handleVacationCancelStart(name) {
+  const person = VacationManager.get(name);
+  if (!person) {
+    const allNames = Object.keys(VacationManager.getAll());
+    return `"${name}" 님의 정보를 찾을 수 없습니다.\n\n등록된 학생: ${allNames.join(', ')}`;
+  }
+  if (person.used.length === 0) {
+    return `<strong>${name}</strong> 님은 현재 사용한 휴가가 없어 취소할 내역이 없습니다.`;
+  }
+  // 사용 내역 번호 매기기
+  let listHtml = person.used.map((v, i) => {
+    const s = v.start.slice(5).replace('-','월 ') + '일';
+    const e = v.end.slice(5).replace('-','월 ') + '일';
+    const dateStr = v.start === v.end ? s : `${s} ~ ${e}`;
+    return `  <strong>${i+1}.</strong> ${dateStr} (${v.days}일)`;
+  }).join('\n');
+  _flowState = { type: 'vacation_cancel', step: 'select', name: name };
+  addBotMessage(`<strong>${name}</strong> 님의 휴가 사용 내역:\n\n${listHtml}\n\n취소할 번호를 입력하세요 (예: 1):`);
+  return null; // 이미 addBotMessage로 응답함
+}
+
+/** 피드백/기능 요청 플로우 시작 */
+function startFeedbackFlowInline() {
+  _flowState = { type: 'feedback', step: 'text' };
+  addBotMessage('💬 피드백이나 기능 요청 내용을 입력해주세요.\n\n예: "검색 결과가 부정확합니다", "세미나 알림 기능 추가 요청" 등\n\n(취소하려면 "취소"를 입력하세요)');
+  return null;
+}
+
+// ═══════════════════════════════════════════
+// Send Message — 플로우 상태에 따라 분기
 // ═══════════════════════════════════════════
 async function sendMessage() {
   const input = document.getElementById('msg-input');
@@ -1144,27 +1243,130 @@ async function sendMessage() {
   input.value = '';
   autoResize(input);
 
-  // 휴가 조회 이름 입력 대기 중이면 바로 개인 휴가 조회
-  if (_waitingForVacationName) {
-    _waitingForVacationName = false;
+  // ── 플로우 상태가 있으면 플로우 처리 ──
+  if (_flowState) {
     showTyping();
     await new Promise(r => setTimeout(r, 300));
-    const result = handleVacationInquiry(text.trim());
     removeTyping();
-    if (typeof result === 'string') {
-      addBotMessage(result);
-    } else {
-      addBotMessage(result.text, result.extra || '');
+
+    // 공통: "취소" 입력 시 플로우 종료
+    if (/^취소$/.test(text.trim())) {
+      _flowState = null;
+      addBotMessage('작업이 취소되었습니다. 다른 질문을 입력해주세요.');
+      return;
     }
-    return;
+
+    const flow = _flowState;
+
+    // ── 휴가 조회 플로우 ──
+    if (flow.type === 'vacation_inquiry' && flow.step === 'name') {
+      _flowState = null;
+      const result = handleVacationInquiry(text.trim());
+      if (typeof result === 'string') { addBotMessage(result); }
+      else { addBotMessage(result.text, result.extra || ''); }
+      return;
+    }
+
+    // ── 휴가 등록 플로우 ──
+    if (flow.type === 'vacation_register') {
+      if (flow.step === 'name') {
+        const name = text.trim();
+        const person = VacationManager.get(name);
+        if (!person) {
+          const allNames = Object.keys(VacationManager.getAll());
+          addBotMessage(`"${name}" 님의 정보를 찾을 수 없습니다.\n\n등록된 학생: ${allNames.join(', ')}\n\n다시 이름을 입력하세요:`);
+          return; // 같은 step 유지
+        }
+        _flowState = { type: 'vacation_register', step: 'date', name: name };
+        addBotMessage(`<strong>${name}</strong> 님의 휴가를 등록합니다.\n\n📅 날짜를 입력하세요:\n예: "4월 15-17일" 또는 "3월 20일"`);
+        return;
+      }
+      if (flow.step === 'date') {
+        // 날짜 파싱: "4월 15-17일", "3월 20일"
+        const dateRange = text.match(/(\d{1,2})월\s*(\d{1,2})[-~](\d{1,2})일?/);
+        const dateSingle = text.match(/(\d{1,2})월\s*(\d{1,2})일?/);
+        let month, startDay, endDay;
+        if (dateRange) {
+          month = parseInt(dateRange[1]); startDay = parseInt(dateRange[2]); endDay = parseInt(dateRange[3]);
+        } else if (dateSingle) {
+          month = parseInt(dateSingle[1]); startDay = parseInt(dateSingle[2]); endDay = startDay;
+        } else {
+          addBotMessage('날짜 형식을 인식하지 못했습니다.\n\n예: "4월 15-17일" 또는 "3월 20일"\n다시 입력해주세요:');
+          return;
+        }
+        _flowState = null;
+        const result = handleVacationRegister(flow.name, month, startDay, endDay);
+        if (typeof result === 'string') { addBotMessage(result); }
+        else { addBotMessage(result.text, result.extra || ''); }
+        return;
+      }
+    }
+
+    // ── 휴가 취소 플로우 ──
+    if (flow.type === 'vacation_cancel') {
+      if (flow.step === 'name') {
+        const name = text.trim();
+        _flowState = null; // handleVacationCancelStart이 다시 설정할 수 있음
+        const result = handleVacationCancelStart(name);
+        if (result !== null) {
+          if (typeof result === 'string') { addBotMessage(result); }
+          else { addBotMessage(result.text, result.extra || ''); }
+        }
+        return;
+      }
+      if (flow.step === 'select') {
+        const idx = parseInt(text.trim()) - 1; // 1-based → 0-based
+        if (isNaN(idx) || idx < 0) {
+          addBotMessage('올바른 번호를 입력해주세요:');
+          return;
+        }
+        _flowState = null;
+        const result = VacationManager.cancel(flow.name, idx);
+        if (!result.success) {
+          if (result.error === 'not_found') {
+            addBotMessage(`"${flow.name}" 님의 정보를 찾을 수 없습니다.`);
+          } else {
+            addBotMessage('올바른 번호를 입력해주세요. 목록에 없는 번호입니다.');
+          }
+          return;
+        }
+        const r = result.removed;
+        const s = r.start.slice(5).replace('-','월 ') + '일';
+        const e = r.end.slice(5).replace('-','월 ') + '일';
+        const dateStr = r.start === r.end ? s : `${s} ~ ${e}`;
+        const extra = `<div class="registered-tag" style="background:#fff3f3;color:var(--danger);border-color:#ffcdd2">❌ 취소 완료 (자동 저장됨)</div>`;
+        addBotMessage(
+          `<strong>${flow.name}</strong> 님의 휴가가 취소되었습니다.\n\n🗑️ 취소된 일정: ${dateStr} (${r.days}일)\n📊 연간 ${result.annual}일 중 ${result.usedTotal}일 사용 → <strong>잔여 ${result.remaining}일</strong>`,
+          extra
+        );
+        return;
+      }
+    }
+
+    // ── 피드백 플로우 ──
+    if (flow.type === 'feedback' && flow.step === 'text') {
+      _flowState = null;
+      PendingManager.add(text.trim(), '기능요청/피드백');
+      const tag = `<div class="pending-tag">📨 피드백이 접수되었습니다</div>`;
+      addBotMessage('감사합니다! 피드백이 기록되었습니다.\n\n교수님 또는 관리자가 확인 후 반영하겠습니다.', tag);
+      return;
+    }
+
+    // 알 수 없는 플로우 상태 → 초기화
+    _flowState = null;
   }
 
+  // ── 일반 메시지 처리 ──
   showTyping();
-
-  // 짧은 딜레이로 자연스러운 응답 연출
   await new Promise(r => setTimeout(r, 400 + Math.random() * 300));
 
   const result = processMessage(text);
+
+  // processMessage가 null을 반환하면 이미 addBotMessage가 호출된 상태
+  if (result === null) {
+    removeTyping();
+    return;
+  }
 
   // Gemini 비동기 처리가 필요한 경우
   if (result === 'gemini_pending') {
