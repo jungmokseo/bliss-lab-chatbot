@@ -914,12 +914,12 @@ function processMessage(text) {
   }
 
   // 4) Member info lookup: "김태영 학번", "이유림 이메일", "박재규 연구자등록번호"
-  const memberMatch = trimmed.match(/^(.{2,10})\s*(학번|이메일|메일|email|연구자등록번호|등록번호|연구자번호|전화|핸드폰|번호|인적사항|정보|연락처|연락|전번)/i);
+  const memberMatch = trimmed.match(/^([가-힣]{2,4})\s*(학번|이메일|메일|email|연구자등록번호|등록번호|연구자번호|전화|핸드폰|번호|인적사항|정보|연락처|연락|전번)/i);
   if (memberMatch) {
     return handleMemberLookup(memberMatch[1].trim(), memberMatch[2]);
   }
   // Also catch: "학번 김태영", "이메일 이유림"
-  const memberMatch2 = trimmed.match(/^(학번|이메일|메일|email|연구자등록번호|등록번호|연구자번호|연락처|연락|전번)\s+(.{2,10})/i);
+  const memberMatch2 = trimmed.match(/^(학번|이메일|메일|email|연구자등록번호|등록번호|연구자번호|연락처|연락|전번)\s+([가-힣]{2,4})$/i);
   if (memberMatch2) {
     return handleMemberLookup(memberMatch2[2].trim(), memberMatch2[1]);
   }
