@@ -1120,14 +1120,69 @@ function buildHistoryContext() {
 // ═══════════════════════════════════════════
 // Gemini API — 자연어 이해 + 등록된 FAQ 기반 답변
 // ═══════════════════════════════════════════
-function buildFaqContext() {
-  return faqData.map((f, i) =>
-    `[FAQ ${i+1}] 질문: ${f.question}\n답변: ${f.answer}\n출처: ${f.answeredBy} (${f.answeredDate})`
+function buildFaqContext(query) {
+  if (!query) {
+    return faqData.map((f, i) =>
+      `[FAQ ${i+1}] 질문: ${f.question}\n답변: ${f.answer}\n출처: ${f.answeredBy} (${f.answeredDate})`
+    ).join('\n\n');
+  }
+
+  // 쿼리에서 핵심 단어 추출
+  const qWords = query.replace(/[?？！!.,()（）]/g, '').split(/\s+/)
+    .filter(w => w.length >= 2);
+  const qLower = query.toLowerCase();
+
+  // 각 FAQ에 관련도 점수 부여
+  const scored = faqData.map((f, i) => {
+    let score = 0;
+    const qText = (f.question || '').toLowerCase();
+    const aText = (f.answer || '').toLowerCase();
+    const combined = qText + ' ' + aText;
+
+    // 쿼리 단어가 질문/답변에 포함되면 점수 부여
+    qWords.forEach(w => {
+      const wl = w.toLowerCase();
+      if (qText.includes(wl)) score += 3;  // 질문에 매칭: 높은 점수
+      if (aText.includes(wl)) score += 1;  // 답변에 매칭: 낮은 점수
+    });
+
+    // 카테고리 매칭 (키워드가 카테고리를 가리킬 때)
+    if (f.category) {
+      const cat = f.category.toLowerCase();
+      if (qLower.includes('계정') || qLower.includes('비번') || qLower.includes('비밀번호') || qLower.includes('아이디') || qLower.includes('로그인')) {
+        if (cat.includes('계정')) score += 5;
+      }
+      if (qLower.includes('과제') || qLower.includes('사사') || qLower.includes('참여율')) {
+        if (cat.includes('과제')) score += 5;
+      }
+      if (qLower.includes('인적') || qLower.includes('학번') || qLower.includes('연락처') || qLower.includes('이메일')) {
+        if (cat.includes('인적') || cat.includes('학생')) score += 5;
+      }
+    }
+
+    return { faq: f, index: i, score };
+  });
+
+  // 점수 높은 순 정렬, 상위 15개만 선택 (최소 점수 1 이상)
+  const relevant = scored
+    .filter(s => s.score >= 1)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 15);
+
+  // 관련 FAQ가 없으면 전체 전송 (폴백)
+  if (relevant.length === 0) {
+    return faqData.map((f, i) =>
+      `[FAQ ${i+1}] 질문: ${f.question}\n답변: ${f.answer}\n출처: ${f.answeredBy} (${f.answeredDate})`
+    ).join('\n\n');
+  }
+
+  return relevant.map(r =>
+    `[FAQ ${r.index+1}] 질문: ${r.faq.question}\n답변: ${r.faq.answer}\n출처: ${r.faq.answeredBy} (${r.faq.answeredDate})`
   ).join('\n\n');
 }
 
 async function askGemini(userQuery) {
-  const faqContext = buildFaqContext();
+  const faqContext = buildFaqContext(userQuery);
   const historyContext = buildHistoryContext();
   try {
     const resp = await fetch(APPS_SCRIPT_URL, {
