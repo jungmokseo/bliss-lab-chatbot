@@ -748,10 +748,10 @@ async function loadFaqFromServer() {
     const data = await resp.json();
 
     if (data.success && data.faq && data.faq.length > 0) {
-      // 서버에서 받은 FAQ로 교체 (keywords는 질문에서 자동 생성)
+      // 서버에서 받은 FAQ로 교체 (keywords는 질문+답변에서 자동 생성)
       faqData = data.faq.map(f => ({
         question: f.question,
-        keywords: extractKeywords(f.question),
+        keywords: extractKeywords(f.question, f.answer),
         answer: f.answer,
         answeredBy: f.answeredBy || '연구실',
         answeredDate: f.answeredDate || '',
@@ -766,17 +766,42 @@ async function loadFaqFromServer() {
   }
 }
 
-/** 질문 텍스트에서 키워드를 자동 추출 */
-function extractKeywords(question) {
+/** 질문+답변 텍스트에서 키워드를 자동 추출 */
+function extractKeywords(question, answer) {
   if (!question) return [];
-  // 불용어 제거 후 2글자 이상 단어 추출
   const stopWords = ['은', '는', '이', '가', '을', '를', '에', '의', '로', '와', '과', '도', '에서',
-    '어떻게', '뭐', '뭘', '어디', '언제', '어떤', '몇', '해', '돼', '되', '하', '있', '없', '할', '할까'];
-  const words = question
-    .replace(/[?？！!.,]/g, '')
+    '어떻게', '뭐', '뭘', '어디', '언제', '어떤', '몇', '해', '돼', '되', '하', '있', '없', '할', '할까',
+    '및', '등', '또는', '그리고', '하는', '했', '된', '합니다', '입니다', '됩니다', '있습니다'];
+
+  // 질문에서 기본 키워드 추출
+  const qWords = question
+    .replace(/[?？！!.,()（）]/g, '')
     .split(/\s+/)
     .filter(w => w.length >= 2 && !stopWords.includes(w));
-  return words;
+
+  // 답변에서 한글 이름(2~4글자)과 핵심 명사 추출
+  const answerKeywords = [];
+  if (answer) {
+    // 한글 이름 패턴: 단독 2~4글자 한글 (이름일 가능성 높음)
+    const nameMatches = answer.match(/(?:^|[\s,·|:])([가-힣]{2,4})(?=[\s,·|:(])/g);
+    if (nameMatches) {
+      nameMatches.forEach(m => {
+        const name = m.trim().replace(/^[,·|:\s]+/, '');
+        if (name.length >= 2 && name.length <= 4 && !stopWords.includes(name)) {
+          answerKeywords.push(name);
+        }
+      });
+    }
+    // 영문 약어/단어 (3글자 이상) — 과제번호, 사이트명 등
+    const engMatches = answer.match(/[A-Za-z0-9]{3,}/g);
+    if (engMatches) {
+      engMatches.slice(0, 30).forEach(w => answerKeywords.push(w));
+    }
+  }
+
+  // 중복 제거
+  const allKeywords = [...new Set([...qWords, ...answerKeywords])];
+  return allKeywords;
 }
 
 function now() {
@@ -889,12 +914,12 @@ function processMessage(text) {
   }
 
   // 4) Member info lookup: "김태영 학번", "이유림 이메일", "박재규 연구자등록번호"
-  const memberMatch = trimmed.match(/^(.{2,10})\s*(학번|이메일|메일|email|연구자등록번호|등록번호|연구자번호|전화|핸드폰|번호|인적사항|정보)/i);
+  const memberMatch = trimmed.match(/^(.{2,10})\s*(학번|이메일|메일|email|연구자등록번호|등록번호|연구자번호|전화|핸드폰|번호|인적사항|정보|연락처|연락|전번)/i);
   if (memberMatch) {
     return handleMemberLookup(memberMatch[1].trim(), memberMatch[2]);
   }
   // Also catch: "학번 김태영", "이메일 이유림"
-  const memberMatch2 = trimmed.match(/^(학번|이메일|메일|email|연구자등록번호|등록번호|연구자번호)\s+(.{2,10})/i);
+  const memberMatch2 = trimmed.match(/^(학번|이메일|메일|email|연구자등록번호|등록번호|연구자번호|연락처|연락|전번)\s+(.{2,10})/i);
   if (memberMatch2) {
     return handleMemberLookup(memberMatch2[2].trim(), memberMatch2[1]);
   }
@@ -1142,18 +1167,10 @@ async function askGemini(userQuery) {
 }
 
 // ═══════════════════════════════════════════
-// handleFAQ — 키워드 매칭 우선, Gemini 보조
+// handleFAQ — 모든 질문을 Gemini AI가 자연어로 답변
 // ═══════════════════════════════════════════
 function handleFAQ(query) {
-  // 1차: 키워드 매칭 시도
-  const { match: bestMatch, score: bestScore } = keywordMatchFAQ(query);
-
-  if (bestMatch && bestScore >= 4) {
-    const dateTag = `<div class="answer-date">📅 답변: ${bestMatch.answeredDate} · ${bestMatch.answeredBy}</div>`;
-    return { text: bestMatch.answer, extra: dateTag };
-  }
-
-  // 2차: Gemini API로 자연어 이해 (async이므로 'gemini_pending' 반환)
+  // 항상 Gemini를 통해 자연어 답변 (키워드 매칭은 Gemini 실패 시 폴백으로만 사용)
   return 'gemini_pending';
 }
 
