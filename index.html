@@ -1137,16 +1137,13 @@ function buildFaqContext(query) {
     let score = 0;
     const qText = (f.question || '').toLowerCase();
     const aText = (f.answer || '').toLowerCase();
-    const combined = qText + ' ' + aText;
 
-    // 쿼리 단어가 질문/답변에 포함되면 점수 부여
     qWords.forEach(w => {
       const wl = w.toLowerCase();
-      if (qText.includes(wl)) score += 3;  // 질문에 매칭: 높은 점수
-      if (aText.includes(wl)) score += 1;  // 답변에 매칭: 낮은 점수
+      if (qText.includes(wl)) score += 3;
+      if (aText.includes(wl)) score += 1;
     });
 
-    // 카테고리 매칭 (키워드가 카테고리를 가리킬 때)
     if (f.category) {
       const cat = f.category.toLowerCase();
       if (qLower.includes('계정') || qLower.includes('비번') || qLower.includes('비밀번호') || qLower.includes('아이디') || qLower.includes('로그인')) {
@@ -1163,22 +1160,58 @@ function buildFaqContext(query) {
     return { faq: f, index: i, score };
   });
 
-  // 점수 높은 순 정렬, 상위 15개만 선택 (최소 점수 1 이상)
   const relevant = scored
     .filter(s => s.score >= 1)
     .sort((a, b) => b.score - a.score)
     .slice(0, 15);
 
-  // 관련 FAQ가 없으면 전체 전송 (폴백)
   if (relevant.length === 0) {
     return faqData.map((f, i) =>
       `[FAQ ${i+1}] 질문: ${f.question}\n답변: ${f.answer}\n출처: ${f.answeredBy} (${f.answeredDate})`
     ).join('\n\n');
   }
 
-  return relevant.map(r =>
-    `[FAQ ${r.index+1}] 질문: ${r.faq.question}\n답변: ${r.faq.answer}\n출처: ${r.faq.answeredBy} (${r.faq.answeredDate})`
-  ).join('\n\n');
+  // ★ 긴 답변은 쿼리 관련 부분만 발췌하여 전송
+  return relevant.map(r => {
+    let answer = r.faq.answer || '';
+
+    // 답변이 300자 이상이고, 줄바꿈으로 구분된 여러 항목이 있는 경우 → 관련 부분만 추출
+    if (answer.length > 300) {
+      const lines = answer.split(/\n/);
+      if (lines.length >= 5) {
+        // 쿼리 키워드가 포함된 줄 + 전후 1줄씩 추출
+        const matchedIndices = new Set();
+        lines.forEach((line, li) => {
+          const lineLower = line.toLowerCase();
+          qWords.forEach(w => {
+            if (w.length >= 2 && lineLower.includes(w.toLowerCase())) {
+              // 매칭 줄 + 전후 2줄 포함 (구조 유지를 위해)
+              for (let k = Math.max(0, li - 2); k <= Math.min(lines.length - 1, li + 2); k++) {
+                matchedIndices.add(k);
+              }
+            }
+          });
+        });
+
+        if (matchedIndices.size > 0 && matchedIndices.size < lines.length * 0.8) {
+          // 매칭된 줄이 전체의 80% 미만일 때만 발췌 (거의 다 매칭이면 전체 표시)
+          const sortedIndices = [...matchedIndices].sort((a, b) => a - b);
+          const excerptLines = [];
+          let lastIdx = -1;
+          sortedIndices.forEach(idx => {
+            if (lastIdx >= 0 && idx - lastIdx > 1) {
+              excerptLines.push('...');  // 건너뛴 부분 표시
+            }
+            excerptLines.push(lines[idx]);
+            lastIdx = idx;
+          });
+          answer = '[아래는 질문과 관련된 부분만 발췌한 것입니다]\n' + excerptLines.join('\n');
+        }
+      }
+    }
+
+    return `[FAQ ${r.index+1}] 질문: ${r.faq.question}\n답변: ${answer}\n출처: ${r.faq.answeredBy} (${r.faq.answeredDate})`;
+  }).join('\n\n');
 }
 
 async function askGemini(userQuery) {
