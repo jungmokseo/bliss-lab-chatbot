@@ -1195,14 +1195,15 @@ function buildFaqContext(query) {
 }
 
 async function askGemini(userQuery) {
-  const faqContext = buildFaqContext(userQuery);
+  // ★ v2.2: 백엔드가 직접 Notion FAQ를 조회하므로 faqContext 전송 불필요
+  // → URL 길이 제한 문제 완전 해결, 프론트 필터링 오류 제거
   const historyContext = buildHistoryContext();
   try {
     const resp = await fetch(APPS_SCRIPT_URL, {
       method: 'POST',
       mode: 'no-cors',
       headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify({ action: 'gemini', query: userQuery, faqContext: faqContext, history: historyContext })
+      body: JSON.stringify({ action: 'gemini', query: userQuery, history: historyContext })
     });
   } catch(e) {}
 
@@ -1226,7 +1227,6 @@ async function askGemini(userQuery) {
     script.src = APPS_SCRIPT_URL
       + '?action=gemini'
       + '&query=' + encodeURIComponent(userQuery)
-      + '&faqContext=' + encodeURIComponent(faqContext)
       + '&history=' + encodeURIComponent(historyContext)
       + '&callback=' + cbName;
     script.onerror = () => { clearTimeout(timeout); resolve(null); };
