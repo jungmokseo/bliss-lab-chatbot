@@ -1127,23 +1127,33 @@ function buildFaqContext(query) {
     ).join('\n\n');
   }
 
-  // 쿼리에서 핵심 단어 추출
+  // 쿼리에서 핵심 단어 추출 (불용어 제거)
+  const stopWords = ['알려줘','알려주세요','뭐야','뭐에요','뭔가요','좀','해줘','해주세요','하는','있는','정보','어떻게','무엇','뭐'];
   const qWords = query.replace(/[?？！!.,()（）]/g, '').split(/\s+/)
-    .filter(w => w.length >= 2);
+    .filter(w => w.length >= 2 && !stopWords.includes(w));
   const qLower = query.toLowerCase();
 
-  // 각 FAQ에 관련도 점수 부여
+  // 각 FAQ에 관련도 점수 부여 — 질문 텍스트 매칭에 강한 가중치
   const scored = faqData.map((f, i) => {
     let score = 0;
     const qText = (f.question || '').toLowerCase();
     const aText = (f.answer || '').toLowerCase();
+    let qMatchCount = 0; // 질문 텍스트에서 매칭된 키워드 수
 
     qWords.forEach(w => {
       const wl = w.toLowerCase();
-      if (qText.includes(wl)) score += 3;
-      if (aText.includes(wl)) score += 1;
+      if (qText.includes(wl)) {
+        score += 10;  // 질문 매칭: 높은 가중치
+        qMatchCount++;
+      }
+      if (aText.includes(wl)) score += 1;  // 답변 매칭: 낮은 가중치
     });
 
+    // ★ 복수 키워드가 질문에서 동시에 매칭되면 대폭 보너스
+    // "뇌선도 사사" → 둘 다 질문에 있는 FAQ에 강한 보너스
+    if (qMatchCount >= 2) score += qMatchCount * 8;
+
+    // 카테고리 보너스
     if (f.category) {
       const cat = f.category.toLowerCase();
       if (qLower.includes('계정') || qLower.includes('비번') || qLower.includes('비밀번호') || qLower.includes('아이디') || qLower.includes('로그인')) {
@@ -1157,60 +1167,30 @@ function buildFaqContext(query) {
       }
     }
 
-    return { faq: f, index: i, score };
+    return { faq: f, index: i, score, qMatchCount };
   });
 
   const relevant = scored
     .filter(s => s.score >= 1)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 15);
+    .sort((a, b) => {
+      // 1차: 질문 매칭 키워드 수 (내림차순)
+      if (b.qMatchCount !== a.qMatchCount) return b.qMatchCount - a.qMatchCount;
+      // 2차: 총점 (내림차순)
+      return b.score - a.score;
+    })
+    .slice(0, 8);  // 상위 8개 (줄여서 정확도 향상)
 
   if (relevant.length === 0) {
+    // 매칭 없으면 전체 FAQ 전송 (Gemini가 판단)
     return faqData.map((f, i) =>
       `[FAQ ${i+1}] 질문: ${f.question}\n답변: ${f.answer}\n출처: ${f.answeredBy} (${f.answeredDate})`
     ).join('\n\n');
   }
 
-  // ★ 긴 답변은 쿼리 관련 부분만 발췌하여 전송
+  // ★ 답변 발췌 없이 전체 답변을 Gemini에 전달
+  // → Gemini가 FAQ 질문 텍스트를 보고 가장 적합한 것을 선택하도록 함
   return relevant.map(r => {
-    let answer = r.faq.answer || '';
-
-    // 답변이 300자 이상이고, 줄바꿈으로 구분된 여러 항목이 있는 경우 → 관련 부분만 추출
-    if (answer.length > 300) {
-      const lines = answer.split(/\n/);
-      if (lines.length >= 5) {
-        // 쿼리 키워드가 포함된 줄 + 전후 1줄씩 추출
-        const matchedIndices = new Set();
-        lines.forEach((line, li) => {
-          const lineLower = line.toLowerCase();
-          qWords.forEach(w => {
-            if (w.length >= 2 && lineLower.includes(w.toLowerCase())) {
-              // 매칭 줄 + 전후 2줄 포함 (구조 유지를 위해)
-              for (let k = Math.max(0, li - 2); k <= Math.min(lines.length - 1, li + 2); k++) {
-                matchedIndices.add(k);
-              }
-            }
-          });
-        });
-
-        if (matchedIndices.size > 0 && matchedIndices.size < lines.length * 0.8) {
-          // 매칭된 줄이 전체의 80% 미만일 때만 발췌 (거의 다 매칭이면 전체 표시)
-          const sortedIndices = [...matchedIndices].sort((a, b) => a - b);
-          const excerptLines = [];
-          let lastIdx = -1;
-          sortedIndices.forEach(idx => {
-            if (lastIdx >= 0 && idx - lastIdx > 1) {
-              excerptLines.push('...');  // 건너뛴 부분 표시
-            }
-            excerptLines.push(lines[idx]);
-            lastIdx = idx;
-          });
-          answer = '[아래는 질문과 관련된 부분만 발췌한 것입니다]\n' + excerptLines.join('\n');
-        }
-      }
-    }
-
-    return `[FAQ ${r.index+1}] 질문: ${r.faq.question}\n답변: ${answer}\n출처: ${r.faq.answeredBy} (${r.faq.answeredDate})`;
+    return `[FAQ ${r.index+1}] (관련도: ${r.score}점) 질문: ${r.faq.question}\n답변: ${r.faq.answer}\n출처: ${r.faq.answeredBy} (${r.faq.answeredDate})`;
   }).join('\n\n');
 }
 
