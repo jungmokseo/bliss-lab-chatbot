@@ -3,6 +3,15 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<!-- PWA Meta Tags -->
+<meta name="theme-color" content="#4A6CF7">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="BLISS FAQ">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/icon-96.png">
 <title>BLISS Lab FAQ</title>
 <style>
   :root {
@@ -51,7 +60,7 @@
   .pw-error { color: var(--danger); font-size: 13px; margin-top: 12px; display:none; }
 
   /* ── Chat Screen ── */
-  #chat-screen { display:none; height:100vh; flex-direction:column; }
+  #chat-screen { display:none; height:100vh; height:100dvh; flex-direction:column; }
   #chat-screen.active { display:flex; }
 
   .chat-header {
@@ -200,6 +209,28 @@
     .pw-box { padding: 36px 24px; }
     .msg { max-width: 92%; }
     .header-actions button { padding: 6px 10px; font-size: 11px; }
+    .quick-btn { padding: 10px 18px; font-size: 14px; }
+    .send-btn { width: 48px; height: 48px; }
+    .input-wrap textarea { font-size: 16px; min-height: 48px; }
+  }
+
+  /* PWA standalone mode (앱 설치 후) */
+  @media (display-mode: standalone) {
+    #password-screen { padding-top: env(safe-area-inset-top); }
+    .chat-header { padding-top: calc(env(safe-area-inset-top, 0px) + 12px); }
+    .input-area { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+    body { padding: 0; overflow: hidden; }
+    #chat-screen { height: 100vh; height: 100dvh; }
+  }
+
+  /* PWA Install Banner */
+  .pwa-install-banner {
+    position: fixed; bottom: 20px; left: 16px; right: 16px;
+    background: var(--white);
+    padding: 16px 20px; border-radius: 16px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.15); z-index: 200;
+    opacity: 0; transform: translateY(20px);
+    transition: opacity 0.3s ease, transform 0.3s ease;
   }
 </style>
 </head>
@@ -914,12 +945,12 @@ function processMessage(text) {
   }
 
   // 4) Member info lookup: "김태영 학번", "이유림 이메일", "박재규 연구자등록번호"
-  const memberMatch = trimmed.match(/^([가-힣]{2,4})\s*(학번|이메일|메일|email|연구자등록번호|등록번호|연구자번호|전화|핸드폰|번호|인적사항|정보|연락처|연락|전번)/i);
+  const memberMatch = trimmed.match(/^(.{2,10})\s*(학번|이메일|메일|email|연구자등록번호|등록번호|연구자번호|전화|핸드폰|번호|인적사항|정보|연락처|연락|전번)/i);
   if (memberMatch) {
     return handleMemberLookup(memberMatch[1].trim(), memberMatch[2]);
   }
   // Also catch: "학번 김태영", "이메일 이유림"
-  const memberMatch2 = trimmed.match(/^(학번|이메일|메일|email|연구자등록번호|등록번호|연구자번호|연락처|연락|전번)\s+([가-힣]{2,4})$/i);
+  const memberMatch2 = trimmed.match(/^(학번|이메일|메일|email|연구자등록번호|등록번호|연구자번호|연락처|연락|전번)\s+(.{2,10})/i);
   if (memberMatch2) {
     return handleMemberLookup(memberMatch2[2].trim(), memberMatch2[1]);
   }
@@ -1120,90 +1151,21 @@ function buildHistoryContext() {
 // ═══════════════════════════════════════════
 // Gemini API — 자연어 이해 + 등록된 FAQ 기반 답변
 // ═══════════════════════════════════════════
-function buildFaqContext(query) {
-  if (!query) {
-    return faqData.map((f, i) =>
-      `[FAQ ${i+1}] 질문: ${f.question}\n답변: ${f.answer}\n출처: ${f.answeredBy} (${f.answeredDate})`
-    ).join('\n\n');
-  }
-
-  // 쿼리에서 핵심 단어 추출 (불용어 제거)
-  const stopWords = ['알려줘','알려주세요','뭐야','뭐에요','뭔가요','좀','해줘','해주세요','하는','있는','정보','어떻게','무엇','뭐'];
-  const qWords = query.replace(/[?？！!.,()（）]/g, '').split(/\s+/)
-    .filter(w => w.length >= 2 && !stopWords.includes(w));
-  const qLower = query.toLowerCase();
-
-  // 각 FAQ에 관련도 점수 부여 — 질문 텍스트 매칭에 강한 가중치
-  const scored = faqData.map((f, i) => {
-    let score = 0;
-    const qText = (f.question || '').toLowerCase();
-    const aText = (f.answer || '').toLowerCase();
-    let qMatchCount = 0; // 질문 텍스트에서 매칭된 키워드 수
-
-    qWords.forEach(w => {
-      const wl = w.toLowerCase();
-      if (qText.includes(wl)) {
-        score += 10;  // 질문 매칭: 높은 가중치
-        qMatchCount++;
-      }
-      if (aText.includes(wl)) score += 1;  // 답변 매칭: 낮은 가중치
-    });
-
-    // ★ 복수 키워드가 질문에서 동시에 매칭되면 대폭 보너스
-    // "뇌선도 사사" → 둘 다 질문에 있는 FAQ에 강한 보너스
-    if (qMatchCount >= 2) score += qMatchCount * 8;
-
-    // 카테고리 보너스
-    if (f.category) {
-      const cat = f.category.toLowerCase();
-      if (qLower.includes('계정') || qLower.includes('비번') || qLower.includes('비밀번호') || qLower.includes('아이디') || qLower.includes('로그인')) {
-        if (cat.includes('계정')) score += 5;
-      }
-      if (qLower.includes('과제') || qLower.includes('사사') || qLower.includes('참여율')) {
-        if (cat.includes('과제')) score += 5;
-      }
-      if (qLower.includes('인적') || qLower.includes('학번') || qLower.includes('연락처') || qLower.includes('이메일')) {
-        if (cat.includes('인적') || cat.includes('학생')) score += 5;
-      }
-    }
-
-    return { faq: f, index: i, score, qMatchCount };
-  });
-
-  const relevant = scored
-    .filter(s => s.score >= 1)
-    .sort((a, b) => {
-      // 1차: 질문 매칭 키워드 수 (내림차순)
-      if (b.qMatchCount !== a.qMatchCount) return b.qMatchCount - a.qMatchCount;
-      // 2차: 총점 (내림차순)
-      return b.score - a.score;
-    })
-    .slice(0, 8);  // 상위 8개 (줄여서 정확도 향상)
-
-  if (relevant.length === 0) {
-    // 매칭 없으면 전체 FAQ 전송 (Gemini가 판단)
-    return faqData.map((f, i) =>
-      `[FAQ ${i+1}] 질문: ${f.question}\n답변: ${f.answer}\n출처: ${f.answeredBy} (${f.answeredDate})`
-    ).join('\n\n');
-  }
-
-  // ★ 답변 발췌 없이 전체 답변을 Gemini에 전달
-  // → Gemini가 FAQ 질문 텍스트를 보고 가장 적합한 것을 선택하도록 함
-  return relevant.map(r => {
-    return `[FAQ ${r.index+1}] (관련도: ${r.score}점) 질문: ${r.faq.question}\n답변: ${r.faq.answer}\n출처: ${r.faq.answeredBy} (${r.faq.answeredDate})`;
-  }).join('\n\n');
+function buildFaqContext() {
+  return faqData.map((f, i) =>
+    `[FAQ ${i+1}] 질문: ${f.question}\n답변: ${f.answer}\n출처: ${f.answeredBy} (${f.answeredDate})`
+  ).join('\n\n');
 }
 
 async function askGemini(userQuery) {
-  // ★ v2.2: 백엔드가 직접 Notion FAQ를 조회하므로 faqContext 전송 불필요
-  // → URL 길이 제한 문제 완전 해결, 프론트 필터링 오류 제거
+  const faqContext = buildFaqContext();
   const historyContext = buildHistoryContext();
   try {
     const resp = await fetch(APPS_SCRIPT_URL, {
       method: 'POST',
       mode: 'no-cors',
       headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify({ action: 'gemini', query: userQuery, history: historyContext })
+      body: JSON.stringify({ action: 'gemini', query: userQuery, faqContext: faqContext, history: historyContext })
     });
   } catch(e) {}
 
@@ -1227,6 +1189,7 @@ async function askGemini(userQuery) {
     script.src = APPS_SCRIPT_URL
       + '?action=gemini'
       + '&query=' + encodeURIComponent(userQuery)
+      + '&faqContext=' + encodeURIComponent(faqContext)
       + '&history=' + encodeURIComponent(historyContext)
       + '&callback=' + cbName;
     script.onerror = () => { clearTimeout(timeout); resolve(null); };
@@ -1530,6 +1493,120 @@ function closeHelp(e) {
     document.getElementById('help-panel').classList.remove('active');
   }
 }
+
+// ═══════════════════════════════════════════
+// PWA: Service Worker & Install
+// ═══════════════════════════════════════════
+let deferredPrompt = null;
+
+// Service Worker 등록
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js')
+      .then(reg => console.log('SW registered:', reg.scope))
+      .catch(err => console.log('SW registration failed:', err));
+  });
+}
+
+// Android: beforeinstallprompt 이벤트
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredPrompt = e;
+  showInstallBanner('android');
+});
+
+// iOS 감지
+function isIOS() {
+  return /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream;
+}
+function isInStandaloneMode() {
+  return window.matchMedia('(display-mode: standalone)').matches ||
+         window.navigator.standalone === true;
+}
+
+// 이미 설치되지 않은 iOS에서 안내
+window.addEventListener('load', () => {
+  if (isIOS() && !isInStandaloneMode()) {
+    // 첫 방문 또는 한 번만 표시 (sessionStorage 사용)
+    if (!sessionStorage.getItem('pwa-ios-shown')) {
+      setTimeout(() => showInstallBanner('ios'), 2000);
+      sessionStorage.setItem('pwa-ios-shown', '1');
+    }
+  }
+});
+
+function showInstallBanner(type) {
+  // 이미 standalone이면 표시 안 함
+  if (isInStandaloneMode()) return;
+
+  const banner = document.createElement('div');
+  banner.className = 'pwa-install-banner';
+  banner.id = 'pwa-install-banner';
+
+  if (type === 'android') {
+    banner.innerHTML = `
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+        <img src="icons/icon-72.png" width="40" height="40" style="border-radius:10px" alt="">
+        <div>
+          <div style="font-weight:700;font-size:15px">BLISS FAQ 앱 설치</div>
+          <div style="font-size:12px;color:#64748B">홈 화면에 추가하여 빠르게 접근</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button onclick="installPWA()" style="flex:1;padding:10px;background:#4A6CF7;color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer">설치하기</button>
+        <button onclick="dismissBanner()" style="padding:10px 16px;background:#F1F5F9;color:#64748B;border:none;border-radius:10px;font-size:14px;cursor:pointer">닫기</button>
+      </div>
+    `;
+  } else {
+    // iOS
+    banner.innerHTML = `
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+        <img src="icons/icon-72.png" width="40" height="40" style="border-radius:10px" alt="">
+        <div>
+          <div style="font-weight:700;font-size:15px">BLISS FAQ 앱 설치</div>
+          <div style="font-size:12px;color:#64748B">홈 화면에 추가하여 앱처럼 사용</div>
+        </div>
+      </div>
+      <div style="background:#F8FAFC;border-radius:10px;padding:12px;font-size:13px;line-height:1.7;color:#475569">
+        <b>Safari</b>에서 하단의 <span style="font-size:18px;vertical-align:middle">⎙</span> 공유 버튼을 탭한 후<br>
+        "<b>홈 화면에 추가</b>"를 선택하세요.
+      </div>
+      <button onclick="dismissBanner()" style="margin-top:10px;width:100%;padding:10px;background:#F1F5F9;color:#64748B;border:none;border-radius:10px;font-size:14px;cursor:pointer">확인</button>
+    `;
+  }
+
+  document.body.appendChild(banner);
+  // 애니메이션
+  requestAnimationFrame(() => {
+    banner.style.opacity = '1';
+    banner.style.transform = 'translateY(0)';
+  });
+}
+
+async function installPWA() {
+  if (!deferredPrompt) return;
+  deferredPrompt.prompt();
+  const { outcome } = await deferredPrompt.userChoice;
+  console.log('Install outcome:', outcome);
+  deferredPrompt = null;
+  dismissBanner();
+}
+
+function dismissBanner() {
+  const banner = document.getElementById('pwa-install-banner');
+  if (banner) {
+    banner.style.opacity = '0';
+    banner.style.transform = 'translateY(20px)';
+    setTimeout(() => banner.remove(), 300);
+  }
+}
+
+// 설치 완료 감지
+window.addEventListener('appinstalled', () => {
+  console.log('PWA installed');
+  deferredPrompt = null;
+  dismissBanner();
+});
 </script>
 </body>
 </html>
